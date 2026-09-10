@@ -1,15 +1,3 @@
-if _G.EmotesGUIRunning then
-    getgenv().Notify({
-        Title = 'Zenthra | Emote',
-        Content = 'It works It actually works',
-        Duration = 5
-    })
-    return
-end
-_G.EmotesGUIRunning = true
-local offsaleAnimationJson = true
-local UI
-
 local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
