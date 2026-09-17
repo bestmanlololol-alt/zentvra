@@ -13194,43 +13194,49 @@ function System.auto_spam.start()
         System.__properties.__connections.__auto_spam:Disconnect()
     end
     System.__properties.__auto_spam_enabled = true
-    System.__properties.__connections.__auto_spam = RunService.PreSimulation:Connect(function()
-        local ball = System.ball.get()
-        if not ball then return end
+    System.__properties.__connections.__auto_spam = RunService.Heartbeat:Connect(function()
+        if not System.__properties.__auto_spam_enabled then return end
+        if not LocalPlayer.Character or not LocalPlayer.Character.PrimaryPart then return end
         if System.__properties.__slashesoffury_active then return end
-        local zoomies = ball:FindFirstChild('zoomies')
-        if not zoomies then return end
-        System.player.get_closest()
-        local ping = Stats.Network.ServerStatsItem['Data Ping']:GetValue()
-        local ping_threshold = math.clamp(ping / 10, 1, 16)
-        local ball_target = ball:GetAttribute('target')
-        local ball_properties = System.auto_spam:get_ball_properties()
-        local entity_properties = System.auto_spam:get_entity_properties()
-        if not ball_properties or not entity_properties then return end
-        local spam_accuracy = System.auto_spam.spam_service({
-            Ball_Properties = ball_properties,
-            Entity_Properties = entity_properties,
-            Ping = ping_threshold
-        })
-        local target_position = Closest_Entity.PrimaryPart.Position
-        local target_distance = LocalPlayer:DistanceFromCharacter(target_position)
-        if zoomies.VectorVelocity.Magnitude == 0 then return end
-        local direction = (LocalPlayer.Character.PrimaryPart.Position - ball.Position).Unit
-        local ball_direction = zoomies.VectorVelocity.Unit
-        local dot = direction:Dot(ball_direction)
-        local distance = LocalPlayer:DistanceFromCharacter(ball.Position)
-        if not ball_target then return end
-        if target_distance > spam_accuracy or distance > spam_accuracy then return end
-        local pulsed = LocalPlayer.Character:GetAttribute('Pulsed')
-        if pulsed then return end
-        if ball_target == LocalPlayer.Name and target_distance > 30 and distance > 30 then return end
-        if distance <= spam_accuracy and System.__properties.__parries > System.__properties.__spam_threshold then
-            if getgenv().AutoSpamMode == "Keypress" then
-                if PF then PF() end
+
+        local balls = System.ball.get_all()
+        if #balls == 0 then
+            local one = System.ball.get()
+            if one then balls = {one} end
+        end
+        local mult = System.__properties.__auto_spam_distance_multiplier or 1
+        local threshold = System.__properties.__spam_threshold or 1
+
+        for _, ball in pairs(balls) do
+            if not ball or not ball.Parent then continue end
+            local zoomies = ball:FindFirstChild('zoomies')
+            if not zoomies then continue end
+            local speed = (zoomies.VectorVelocity or Vector3.new()).Magnitude
+            if speed < 1 then continue end
+
+            local targeted = false
+            if System.ball.is_targeted then
+                targeted = System.ball.is_targeted(ball)
             else
-                System.parry.execute()
-                if getgenv().AutoSpamAnimationFix and PF then
-                    PF()
+                targeted = ball:GetAttribute('target') == LocalPlayer.Name
+            end
+            if not targeted then continue end
+
+            local distance = LocalPlayer:DistanceFromCharacter(ball.Position)
+            local ping = Stats.Network.ServerStatsItem['Data Ping']:GetValue() / 10
+            local base = math.clamp(ping / 10, 8, 28) + math.max(speed / 12, 12)
+            local spam_range = base * mult * math.max(1, threshold)
+
+            if distance <= spam_range then
+                if getgenv().AutoSpamMode == "Keypress" then
+                    if PF then pcall(PF) end
+                else
+                    if System.parry and System.parry.execute then
+                        pcall(System.parry.execute)
+                    end
+                    if getgenv().AutoSpamAnimationFix and PF then
+                        pcall(PF)
+                    end
                 end
             end
         end
@@ -14286,174 +14292,248 @@ local function destroy_mobile_gui(gui_data)
     end
 end
 
-local function create_triggerbot_panel()
-    if System.__properties.__triggerbot_ui then
-        return System.__properties.__triggerbot_ui
+local function create_allusive_hold_panel(opts)
+    opts = opts or {}
+    local key = opts.key or opts.name or 'AllusivePanel'
+    if System.__properties.__allusive_panels and System.__properties.__allusive_panels[key] then
+        local existing = System.__properties.__allusive_panels[key]
+        if existing.gui and existing.gui.Parent then
+            existing.gui.Enabled = true
+            return existing
+        end
     end
+    System.__properties.__allusive_panels = System.__properties.__allusive_panels or {}
 
     local ScreenGui = Instance.new('ScreenGui')
-    ScreenGui.Name = 'TriggerbotPanel'
+    ScreenGui.Name = opts.name or 'AllusivePanel'
     ScreenGui.ResetOnSpawn = false
     ScreenGui.IgnoreGuiInset = true
     ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    ScreenGui.DisplayOrder = 100
     ScreenGui.Parent = CoreGui
 
     local Frame = Instance.new('Frame')
-    Frame.Name = 'TriggerbotFrame'
-    Frame.Size = UDim2.new(0, 140, 0, 70)
-    Frame.Position = UDim2.new(0.4, 0, 0.5, -35)
+    Frame.Name = 'Panel'
+    Frame.Size = UDim2.new(0, 160, 0, 54)
+    Frame.Position = opts.position or UDim2.new(0.5, -80, 0.75, 0)
     Frame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
-    Frame.BorderSizePixel = 1
-    Frame.BorderColor3 = Color3.fromRGB(78, 92, 122)
+    Frame.BorderSizePixel = 0
+    Frame.Active = true
     Frame.Parent = ScreenGui
 
-    local FrameStroke = Instance.new('UIStroke', Frame)
-    FrameStroke.Color = Color3.fromRGB(78, 92, 122)
-    FrameStroke.Thickness = 1
+    local Corner = Instance.new('UICorner')
+    Corner.CornerRadius = UDim.new(0, 8)
+    Corner.Parent = Frame
 
-    local Title = Instance.new('TextLabel')
-    Title.Name = 'Title'
-    Title.BackgroundTransparency = 1
-    Title.Size = UDim2.new(1, 0, 0, 16)
-    Title.Position = UDim2.new(0, 0, 0, 6)
-    Title.Font = Enum.Font.GothamBold
-    Title.Text = 'Triggerbot'
-    Title.TextColor3 = Color3.fromRGB(255, 255, 255)
-    Title.TextSize = 13
-    Title.TextXAlignment = Enum.TextXAlignment.Center
-    Title.Parent = Frame
+    local Stroke = Instance.new('UIStroke')
+    Stroke.Color = Color3.fromRGB(78, 92, 122)
+    Stroke.Thickness = 1.5
+    Stroke.Parent = Frame
 
-    local ToggleBtn = Instance.new('TextButton')
-    ToggleBtn.Name = 'Toggle'
-    ToggleBtn.Size = UDim2.new(0, 110, 0, 28)
-    ToggleBtn.Position = UDim2.new(0.5, -55, 0, 36)
-    ToggleBtn.BackgroundColor3 = Color3.fromRGB(40, 42, 50)
-    ToggleBtn.BorderSizePixel = 1
-    ToggleBtn.BorderColor3 = Color3.fromRGB(78, 92, 122)
-    ToggleBtn.Font = Enum.Font.GothamBold
-    ToggleBtn.Text = 'OFF'
-    ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    ToggleBtn.TextSize = 13
-    ToggleBtn.Parent = Frame
-    local ToggleStroke = Instance.new('UIStroke', ToggleBtn)
-    ToggleStroke.Color = Color3.fromRGB(78, 92, 122)
-    ToggleStroke.Thickness = 1
+    local Btn = Instance.new('TextButton')
+    Btn.Name = 'Action'
+    Btn.Size = UDim2.new(1, -12, 1, -12)
+    Btn.Position = UDim2.new(0, 6, 0, 6)
+    Btn.BackgroundColor3 = Color3.fromRGB(40, 42, 50)
+    Btn.BorderSizePixel = 0
+    Btn.Font = Enum.Font.GothamBold
+    Btn.Text = opts.title or 'Button'
+    Btn.TextColor3 = Color3.fromRGB(220, 225, 235)
+    Btn.TextSize = 15
+    Btn.AutoButtonColor = false
+    Btn.Parent = Frame
 
-    local dragging = false
-    local dragStart
-    local startPos
+    local BtnCorner = Instance.new('UICorner')
+    BtnCorner.CornerRadius = UDim.new(0, 6)
+    BtnCorner.Parent = Btn
 
-    Title.InputBegan:Connect(function(input)
+    local BtnStroke = Instance.new('UIStroke')
+    BtnStroke.Color = Color3.fromRGB(78, 92, 122)
+    BtnStroke.Thickness = 1
+    BtnStroke.Parent = Btn
+
+    local active = false
+    local mode = opts.mode or 'hold' -- hold | toggle
+
+    local function set_visual(on)
+        active = on
+        if on then
+            Btn.BackgroundColor3 = Color3.fromRGB(60, 90, 140)
+            Btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+            BtnStroke.Color = Color3.fromRGB(152, 181, 255)
+            Stroke.Color = Color3.fromRGB(152, 181, 255)
+        else
+            Btn.BackgroundColor3 = Color3.fromRGB(40, 42, 50)
+            Btn.TextColor3 = Color3.fromRGB(220, 225, 235)
+            BtnStroke.Color = Color3.fromRGB(78, 92, 122)
+            Stroke.Color = Color3.fromRGB(78, 92, 122)
+        end
+    end
+
+    local function press()
+        if mode == 'toggle' then
+            set_visual(not active)
+            if active then
+                if opts.on_press then opts.on_press() end
+            else
+                if opts.on_release then opts.on_release() end
+            end
+        else
+            set_visual(true)
+            if opts.on_press then opts.on_press() end
+        end
+    end
+
+    local function release()
+        if mode == 'hold' then
+            set_visual(false)
+            if opts.on_release then opts.on_release() end
+        end
+    end
+
+    Btn.MouseButton1Down:Connect(press)
+    Btn.MouseButton1Up:Connect(release)
+    Btn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch then
+            press()
+        end
+    end)
+    Btn.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch then
+            release()
+        end
+    end)
+
+    -- drag whole frame
+    local dragging, dragStart, startPos
+    Frame.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             dragStart = input.Position
             startPos = Frame.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
         end
     end)
-
-    Title.InputChanged:Connect(function(input)
-        if not dragging then
-            return
-        end
-
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
             local delta = input.Position - dragStart
-            Frame.Position = UDim2.new(
-                startPos.X.Scale,
-                startPos.X.Offset + delta.X,
-                startPos.Y.Scale,
-                startPos.Y.Offset + delta.Y
-            )
+            Frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
         end
     end)
 
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
-        end
-    end)
-
-    local function update_button(active)
-        if active then
-            ToggleBtn.Text = 'ON'
-            ToggleBtn.TextColor3 = Color3.fromRGB(18, 18, 18)
-            ToggleBtn.BackgroundColor3 = Color3.fromRGB(100, 220, 130)
-            ToggleStroke.Color = Color3.fromRGB(100, 220, 130)
-        else
-            ToggleBtn.Text = 'OFF'
-            ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-            ToggleBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
-            ToggleStroke.Color = Color3.fromRGB(38, 38, 38)
-        end
-    end
-
-    ToggleBtn.MouseButton1Click:Connect(function()
-        if System then
-            local newState = not System.__properties.__triggerbot_enabled
-            System.__properties.__triggerbot_enabled = newState
-            if System.triggerbot and System.triggerbot.enable then
-                pcall(System.triggerbot.enable, newState)
-            end
-
-            update_button(newState)
-
-            if getgenv().TriggerbotNotify then
-                send_notification('Triggerbot', newState and 'ON' or 'OFF', 2)
-            end
-        end
-    end)
-
-    System.__properties.__triggerbot_ui = {
+    local panel = {
         gui = ScreenGui,
         frame = Frame,
-        button = ToggleBtn,
-        title = Title,
-        update = update_button
+        button = Btn,
+        set_active = set_visual,
+        destroy = function()
+            pcall(function() ScreenGui:Destroy() end)
+            if System.__properties.__allusive_panels then
+                System.__properties.__allusive_panels[key] = nil
+            end
+        end
     }
-
-    return System.__properties.__triggerbot_ui
+    System.__properties.__allusive_panels[key] = panel
+    return panel
 end
+
+-- keep old name as alias so any leftover calls still work
+function create_triggerbot_panel()
+    return create_allusive_hold_panel({
+        key = 'triggerbot',
+        name = 'ZenVthraTriggerbot',
+        title = 'Triggerbot',
+        mode = 'toggle',
+        position = UDim2.new(0.55, 0, 0.72, 0),
+        on_press = function()
+            if System.triggerbot and System.triggerbot.enable then
+                pcall(System.triggerbot.enable, true)
+            end
+            System.__properties.__triggerbot_enabled = true
+            if System.__triggerbot then System.__triggerbot.__enabled = true end
+        end,
+        on_release = function()
+            if System.triggerbot and System.triggerbot.enable then
+                pcall(System.triggerbot.enable, false)
+            end
+            System.__properties.__triggerbot_enabled = false
+            if System.__triggerbot then System.__triggerbot.__enabled = false end
+        end
+    })
+end
+
 
 local triggerbot_module = AutoparryTab:create_module({
     title = "Triggerbot",
-    description = "Triggerbot Settings",
+    description = "Allusive Triggerbot button",
     flag = "TriggerbotModule",
     section = "right",
     callback = function(state)
-        if System then
-            System.__properties.__triggerbot_enabled = state
-            if state then
-                if System.triggerbot and System.triggerbot.enable then pcall(System.triggerbot.enable, true) end
-                if getgenv().TriggerbotNotify then
-                    send_notification("Triggerbot", "ON", 2)
+        if getgenv().TriggerbotNotify ~= false then
+            pcall(function()
+                if send_notification then
+                    send_notification("Triggerbot", state and "ON" or "OFF", 2)
+                else
+                    Library.SendNotification({ title = "Triggerbot", text = state and "ON" or "OFF", duration = 2 })
                 end
-
-                do
-                    if not System.__properties.__triggerbot_ui then
-                        create_triggerbot_panel()
-                    end
-
-                    if System.__properties.__triggerbot_ui and System.__properties.__triggerbot_ui.update then
-                        System.__properties.__triggerbot_ui.update(true)
-                    end
-                end
-
-            else
-                if System.triggerbot and System.triggerbot.enable then pcall(System.triggerbot.enable, false) end
-                if getgenv().TriggerbotNotify then
-                    send_notification("Triggerbot", "OFF", 2)
-                end
-                if System.__properties.__triggerbot_ui and System.__properties.__triggerbot_ui.gui then
-                    pcall(function()
-                        System.__properties.__triggerbot_ui.gui:Destroy()
-                    end)
-                    System.__properties.__triggerbot_ui = nil
-                end
-                if System.__properties.__mobile_guis.triggerbot then
-                    destroy_mobile_gui(System.__properties.__mobile_guis.triggerbot)
-                    System.__properties.__mobile_guis.triggerbot = nil
-                end
+            end)
+        end
+        if state then
+            if System.__properties.__triggerbot_panel then
+                pcall(function() System.__properties.__triggerbot_panel.destroy() end)
+                System.__properties.__triggerbot_panel = nil
             end
+            System.__properties.__triggerbot_panel = create_allusive_hold_panel({
+                key = 'triggerbot',
+                name = 'ZenVthraTriggerbot',
+                title = 'Triggerbot',
+                mode = 'toggle',
+                position = UDim2.new(0.55, 0, 0.72, 0),
+                on_press = function()
+                    if System.triggerbot and System.triggerbot.enable then
+                        pcall(System.triggerbot.enable, true)
+                    end
+                    System.__properties.__triggerbot_enabled = true
+                    if System.__triggerbot then System.__triggerbot.__enabled = true end
+                end,
+                on_release = function()
+                    if System.triggerbot and System.triggerbot.enable then
+                        pcall(System.triggerbot.enable, false)
+                    end
+                    System.__properties.__triggerbot_enabled = false
+                    if System.__triggerbot then System.__triggerbot.__enabled = false end
+                end
+            })
+            -- also enable engine when module toggled on (button toggles further)
+            if System.triggerbot and System.triggerbot.enable then
+                pcall(System.triggerbot.enable, true)
+            end
+            System.__properties.__triggerbot_enabled = true
+            if System.__triggerbot then System.__triggerbot.__enabled = true end
+            if System.__properties.__triggerbot_panel and System.__properties.__triggerbot_panel.set_active then
+                System.__properties.__triggerbot_panel.set_active(true)
+            end
+        else
+            if System.triggerbot and System.triggerbot.enable then
+                pcall(System.triggerbot.enable, false)
+            end
+            System.__properties.__triggerbot_enabled = false
+            if System.__triggerbot then System.__triggerbot.__enabled = false end
+            if System.__properties.__triggerbot_panel then
+                pcall(function() System.__properties.__triggerbot_panel.destroy() end)
+                System.__properties.__triggerbot_panel = nil
+            end
+            pcall(function()
+                local old = CoreGui:FindFirstChild('TriggerbotPanel')
+                if old then old:Destroy() end
+                local old2 = CoreGui:FindFirstChild('ZenVthraTriggerbot')
+                if old2 then old2:Destroy() end
+            end)
+            System.__properties.__triggerbot_ui = nil
         end
     end
 })
@@ -14624,276 +14704,63 @@ getgenv().Connections_Manager = Connections_Manager
 local manual_spam_module = SpamTab:create_module({
     title = "Manuel Spam",
     flag = "Manual_Spam_Parry",
-    description = "Manually Spams Parry",
+    description = "Hold Allusive button to spam parry",
     section = "left",
     callback = function(state)
-        if getgenv().ManualSpamNotify then
-            if state then
-                pcall(function()
-                    Library.SendNotification({
-                        title = "Manuel Spam",
-                        text = "ON",
-                        duration = 2
-                    })
-                end)
-            else
-                pcall(function()
-                    Library.SendNotification({
-                        title = "Manuel Spam",
-                        text = "OFF",
-                        duration = 2
-                    })
-                end)
-            end
+        if getgenv().ManualSpamNotify ~= false then
+            pcall(function()
+                Library.SendNotification({
+                    title = "Manuel Spam",
+                    text = state and "ON" or "OFF",
+                    duration = 2
+                })
+            end)
         end
 
         if state then
-            if System and System.manual_spam and System.manual_spam.start then
-                pcall(System.manual_spam.start)
+            -- always show Allusive floating button (all devices)
+            if System.__properties.__manual_spam_panel then
+                pcall(function() System.__properties.__manual_spam_panel.destroy() end)
+                System.__properties.__manual_spam_panel = nil
             end
-
-            if System and System.__properties and System.__properties.__is_mobile and not System.__properties.__manual_spam_ui_created then
-                local ScreenGui = Instance.new("ScreenGui", CoreGui)
-                ScreenGui.Name = "ManualSpamPanel"
-                ScreenGui.ResetOnSpawn = false
-                ScreenGui.IgnoreGuiInset = true
-                ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-
-                local SpamFrame = Instance.new("Frame", ScreenGui)
-                SpamFrame.Name = "SpamFrame"
-                SpamFrame.Size = UDim2.new(0, 140, 0, 70)
-                SpamFrame.Position = UDim2.new(0.4, 0, 0.5, -35)
-                SpamFrame.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
-                SpamFrame.BorderSizePixel = 1
-                SpamFrame.BorderColor3 = Color3.fromRGB(38, 38, 38)
-                SpamFrame.Visible = true
-
-                local SpamStroke = Instance.new("UIStroke", SpamFrame)
-                SpamStroke.Color = Color3.fromRGB(38, 38, 38)
-                SpamStroke.Thickness = 1
-
-                local SpamTitleLbl = Instance.new("TextLabel", SpamFrame)
-                SpamTitleLbl.Size = UDim2.new(1, 0, 0, 16)
-                SpamTitleLbl.Position = UDim2.new(0, 0, 0, 6)
-                SpamTitleLbl.Text = "6xMS"
-                SpamTitleLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
-                SpamTitleLbl.BackgroundTransparency = 1
-                SpamTitleLbl.Font = Enum.Font.GothamBold
-                SpamTitleLbl.TextSize = 13
-                SpamTitleLbl.TextXAlignment = Enum.TextXAlignment.Center
-
-                local SpamToggleBtn = Instance.new("TextButton", SpamFrame)
-                SpamToggleBtn.Size = UDim2.new(0, 110, 0, 28)
-                SpamToggleBtn.Position = UDim2.new(0.5, -55, 0, 34)
-                SpamToggleBtn.Text = "OFF"
-                SpamToggleBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
-                SpamToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-                SpamToggleBtn.BorderSizePixel = 1
-                SpamToggleBtn.BorderColor3 = Color3.fromRGB(38, 38, 38)
-                SpamToggleBtn.Font = Enum.Font.GothamBold
-                SpamToggleBtn.TextSize = 13
-                local SpamToggleStroke = Instance.new("UIStroke", SpamToggleBtn)
-                SpamToggleStroke.Color = Color3.fromRGB(38, 38, 38)
-                SpamToggleStroke.Thickness = 1
-
-                local dragging = false
-                local dragStart = nil
-                local startPos = nil
-
-                SpamTitleLbl.InputBegan:Connect(function(input)
-                    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                        dragging = true
-                        dragStart = input.Position
-                        startPos = SpamFrame.Position
+            System.__properties.__manual_spam_panel = create_allusive_hold_panel({
+                key = 'manuel_spam',
+                name = 'ZenVthraManuelSpam',
+                title = 'Manuel Spam',
+                mode = 'hold',
+                position = UDim2.new(0.35, 0, 0.72, 0),
+                on_press = function()
+                    if System and System.manual_spam and System.manual_spam.start then
+                        pcall(System.manual_spam.start)
                     end
-                end)
-
-                SpamTitleLbl.InputChanged:Connect(function(input)
-                    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-                        if dragging and dragStart then
-                            local delta = input.Position - dragStart
-                            SpamFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-                        end
-                    end
-                end)
-
-                UserInputService.InputEnded:Connect(function(input)
-                    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-                        dragging = false
-                    end
-                end)
-
-                local SpamActive = false
-
-                local function UpdateSpamColors(active)
-                        if active then
-                        SpamFrame.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
-                        SpamStroke.Color = Color3.fromRGB(38, 38, 38)
-                        SpamTitleLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
-                        SpamToggleBtn.TextColor3 = Color3.fromRGB(18, 18, 18)
-                        SpamToggleBtn.BackgroundColor3 = Color3.fromRGB(100, 220, 130)
-                        SpamToggleStroke.Color = Color3.fromRGB(100, 220, 130)
-                    else
-                        SpamFrame.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
-                        SpamStroke.Color = Color3.fromRGB(38, 38, 38)
-                        SpamTitleLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
-                        SpamToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-                        SpamToggleBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
-                        SpamToggleStroke.Color = Color3.fromRGB(38, 38, 38)
+                end,
+                on_release = function()
+                    if System and System.manual_spam and System.manual_spam.stop then
+                        pcall(System.manual_spam.stop)
                     end
                 end
-
-                SpamToggleBtn.MouseButton1Click:Connect(function()
-                    SpamActive = not SpamActive
-                    SpamToggleBtn.Text = SpamActive and "ON" or "OFF"
-                    UpdateSpamColors(SpamActive)
-                    if SpamActive then
-                        if System and System.manual_spam and System.manual_spam.start then pcall(System.manual_spam.start) end
-                    else
-                        if System and System.manual_spam and System.manual_spam.stop then pcall(System.manual_spam.stop) end
-                    end
-                end)
-
-                System.__properties.__manual_spam_ui = {
-                    gui = ScreenGui,
-                    frame = SpamFrame,
-                    button = SpamToggleBtn,
-                    title = SpamTitleLbl,
-                    active = true,
-                    update = UpdateSpamColors
-                }
-                System.__properties.__manual_spam_ui_created = true
-
-                SpamActive = true
-                UpdateSpamColors(true)
-            end
+            })
         else
             if System and System.manual_spam and System.manual_spam.stop then
                 pcall(System.manual_spam.stop)
             end
-
-            if System.__properties.__manual_spam_ui and System.__properties.__manual_spam_ui.gui then
-                pcall(function()
-                    System.__properties.__manual_spam_ui.gui:Destroy()
-                end)
-                System.__properties.__manual_spam_ui = nil
-                System.__properties.__manual_spam_ui_created = false
+            if System.__properties.__manual_spam_panel then
+                pcall(function() System.__properties.__manual_spam_panel.destroy() end)
+                System.__properties.__manual_spam_panel = nil
             end
+            -- cleanup any old 6xMS
+            pcall(function()
+                local old = CoreGui:FindFirstChild('ManualSpamPanel')
+                if old then old:Destroy() end
+            end)
+            System.__properties.__manual_spam_ui_created = false
         end
-    end
-})
-
-manual_spam_module:change_state(false)
-
-do
-    manual_spam_module:create_checkbox({
-        title = "UI",
-        flag = "Manual_Spam_UI",
-        callback = function(value)
-            getgenv().spamui = value
-
-            if value then
-                local gui = Instance.new("ScreenGui")
-                gui.Name = "ManuelSpamUI"
-                gui.ResetOnSpawn = false
-                gui.Parent = game.CoreGui
-
-                local frame = Instance.new("Frame")
-                frame.Name = "MainFrame"
-                frame.Position = UDim2.new(0, 20, 0, 20)
-                frame.Size = UDim2.new(0, 200, 0, 100)
-                frame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
-                frame.BackgroundTransparency = 0.08
-                frame.BorderSizePixel = 0
-                frame.Active = true
-                frame.Draggable = true
-                frame.Parent = gui
-
-                local uiCorner = Instance.new("UICorner")
-                uiCorner.CornerRadius = UDim.new(0, 12)
-                uiCorner.Parent = frame
-
-                local uiStroke = Instance.new("UIStroke")
-                uiStroke.Thickness = 2
-                uiStroke.Color = Color3.fromRGB(78, 92, 122)
-                uiStroke.Thickness = 1.5
-                uiStroke.Parent = frame
-
-                local button = Instance.new("TextButton")
-                button.Name = "ManuelSpamButton"
-                button.Text = "Manuel Spam"
-                button.Size = UDim2.new(0, 160, 0, 40)
-                button.Position = UDim2.new(0.5, -80, 0.5, -20)
-                button.BackgroundTransparency = 1
-                button.BorderSizePixel = 0
-                button.Font = Enum.Font.GothamSemibold
-                button.TextColor3 = Color3.new(1, 1, 1)
-                button.TextSize = 22
-                button.Parent = frame
-
-                local activated = false
-
-                local function toggle()
-                    activated = not activated
-                    button.Text = activated and "Stop" or "Manuel Spam"
-                    if activated then
-                        local spam_accumulator = 0
-                        Connections_Manager['Manual Spam UI'] = game:GetService("RunService").Heartbeat:Connect(function(delta)
-                            spam_accumulator = spam_accumulator + (delta or 0)
-                            local interval = get_manual_spam_interval()
-                            if spam_accumulator < interval then
-                                return
-                            end
-                            spam_accumulator = spam_accumulator - interval
-                            System.parry.execute()
-                        end)
-                    else
-                        if Connections_Manager['Manual Spam UI'] then
-                            Connections_Manager['Manual Spam UI']:Disconnect()
-                            Connections_Manager['Manual Spam UI'] = nil
-                        end
-                    end
-                end
-
-                button.MouseButton1Click:Connect(toggle)
-            else
-                if game.CoreGui:FindFirstChild("ManuelSpamUI") then
-                    game.CoreGui:FindFirstChild("ManuelSpamUI"):Destroy()
-                end
-
-                if Connections_Manager['Manual Spam UI'] then
-                    Connections_Manager['Manual Spam UI']:Disconnect()
-                    Connections_Manager['Manual Spam UI'] = nil
-                end
-            end
-        end
-    })
-end
-
-manual_spam_module:create_checkbox({
-    title = "Enable CPS",
-    flag = "Manual_Spam_CPS_Enabled",
-    callback = function(value)
-        getgenv().ManualSpamCPSEnabled = value
-    end
-})
-
-manual_spam_cps_slider = manual_spam_module:create_slider({
-    title = "CPS",
-    flag = "Manual_Spam_CPS",
-    minimum_value = 1,
-    maximum_value = 2000,
-    value = System and System.__properties and System.__properties.__is_mobile and 20 or 1,
-    round_number = true,
-    callback = function(value)
-        getgenv().ManualSpamCPS = value
-        warn_manual_spam_cps(value)
     end
 })
 
 manual_spam_module:create_checkbox({
     title = "Notify",
-    flag = "Manual_Spam_Parry_Notify",
+    flag = "ManualSpamNotify",
     callback = function(value)
         getgenv().ManualSpamNotify = value
     end
@@ -14905,18 +14772,30 @@ local auto_spam_module = SpamTab:create_module({
     flag = "AutoSpamModule",
     section = "right",
     callback = function(state)
-        if System and System.auto_spam then
+        if System then
             System.__properties.__auto_spam_enabled = state
             if state then
                 if System.auto_spam and System.auto_spam.start then pcall(System.auto_spam.start) end
-                if getgenv().AutoSpamNotify then
-                    send_notification("Auto Spam", "ON", 2)
-                end
+                pcall(function()
+                    if getgenv().AutoSpamNotify ~= false then
+                        if send_notification then
+                            send_notification("Auto Spam", "ON", 2)
+                        elseif Library and Library.SendNotification then
+                            Library.SendNotification({ title = "Auto Spam", text = "ON", duration = 2 })
+                        end
+                    end
+                end)
             else
                 if System.auto_spam and System.auto_spam.stop then pcall(System.auto_spam.stop) end
-                if getgenv().AutoSpamNotify then
-                    send_notification("Auto Spam", "OFF", 2)
-                end
+                pcall(function()
+                    if getgenv().AutoSpamNotify ~= false then
+                        if send_notification then
+                            send_notification("Auto Spam", "OFF", 2)
+                        elseif Library and Library.SendNotification then
+                            Library.SendNotification({ title = "Auto Spam", text = "OFF", duration = 2 })
+                        end
+                    end
+                end)
             end
         end
     end
