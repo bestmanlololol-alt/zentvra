@@ -12326,7 +12326,8 @@ local System = {
             __aerodynamic = false,
             __singularity = false,
             __anticurve = false,
-            __slashesofduality = false
+            __slashesofduality = false,
+            __dribble = false
         }
     },
     __triggerbot = {
@@ -13194,43 +13195,62 @@ function System.auto_spam.start()
         System.__properties.__connections.__auto_spam:Disconnect()
     end
     System.__properties.__auto_spam_enabled = true
-    System.__properties.__connections.__auto_spam = RunService.PreSimulation:Connect(function()
-        local ball = System.ball.get()
-        if not ball then return end
+    System.__properties.__connections.__auto_spam = RunService.Heartbeat:Connect(function()
+        if not System.__properties.__auto_spam_enabled then return end
+        if not LocalPlayer.Character or not LocalPlayer.Character.PrimaryPart then return end
         if System.__properties.__slashesoffury_active then return end
-        local zoomies = ball:FindFirstChild('zoomies')
-        if not zoomies then return end
-        System.player.get_closest()
-        local ping = Stats.Network.ServerStatsItem['Data Ping']:GetValue()
-        local ping_threshold = math.clamp(ping / 10, 1, 16)
-        local ball_target = ball:GetAttribute('target')
-        local ball_properties = System.auto_spam:get_ball_properties()
-        local entity_properties = System.auto_spam:get_entity_properties()
-        if not ball_properties or not entity_properties then return end
-        local spam_accuracy = System.auto_spam.spam_service({
-            Ball_Properties = ball_properties,
-            Entity_Properties = entity_properties,
-            Ping = ping_threshold
-        })
-        local target_position = Closest_Entity.PrimaryPart.Position
-        local target_distance = LocalPlayer:DistanceFromCharacter(target_position)
-        if zoomies.VectorVelocity.Magnitude == 0 then return end
-        local direction = (LocalPlayer.Character.PrimaryPart.Position - ball.Position).Unit
-        local ball_direction = zoomies.VectorVelocity.Unit
-        local dot = direction:Dot(ball_direction)
-        local distance = LocalPlayer:DistanceFromCharacter(ball.Position)
-        if not ball_target then return end
-        if target_distance > spam_accuracy or distance > spam_accuracy then return end
-        local pulsed = LocalPlayer.Character:GetAttribute('Pulsed')
-        if pulsed then return end
-        if ball_target == LocalPlayer.Name and target_distance > 30 and distance > 30 then return end
-        if distance <= spam_accuracy and System.__properties.__parries > System.__properties.__spam_threshold then
-            if getgenv().AutoSpamMode == "Keypress" then
-                if PF then PF() end
-            else
-                System.parry.execute()
-                if getgenv().AutoSpamAnimationFix and PF then
-                    PF()
+        if LocalPlayer.Character:GetAttribute('Pulsed') then return end
+
+        local balls = {}
+        if System.ball.get_all then
+            balls = System.ball.get_all() or {}
+        end
+        if #balls == 0 then
+            local one = System.ball.get and System.ball.get() or nil
+            if one then balls = {one} end
+        end
+        if #balls == 0 then return end
+
+        local mult = tonumber(System.__properties.__auto_spam_distance_multiplier) or 1
+        if mult < 0.3 then mult = 0.3 end
+        local threshold = tonumber(System.__properties.__spam_threshold) or 1
+
+        for _, ball in pairs(balls) do
+            if not ball or not ball.Parent then continue end
+            local zoomies = ball:FindFirstChild('zoomies')
+            if not zoomies then continue end
+            local vel = zoomies.VectorVelocity or ball.AssemblyLinearVelocity or Vector3.new()
+            local speed = vel.Magnitude
+            if speed < 1 then continue end
+
+            local target = ball:GetAttribute('target')
+            local targeted = (target == LocalPlayer.Name)
+            if not targeted and System.ball and System.ball.is_targeted then
+                targeted = System.ball.is_targeted(ball)
+            end
+            if not targeted then continue end
+
+            local distance = LocalPlayer:DistanceFromCharacter(ball.Position)
+            if not distance or distance ~= distance then continue end
+
+            local ping = Stats.Network.ServerStatsItem['Data Ping']:GetValue() / 10
+            local ping_threshold = math.clamp(ping / 10, 5, 20)
+            -- spam window: wider than single-parry so it keeps firing while ball is on you
+            local base = ping_threshold + math.max(speed / 10, 14)
+            local spam_range = base * mult * (0.85 + 0.15 * threshold)
+
+            if distance <= spam_range then
+                if getgenv().AutoSpamMode == "Keypress" then
+                    if PF then pcall(PF) end
+                else
+                    if System.parry and System.parry.execute then
+                        pcall(System.parry.execute)
+                    elseif System.parry and System.parry.execute_action then
+                        pcall(System.parry.execute_action)
+                    end
+                    if getgenv().AutoSpamAnimationFix and PF then
+                        pcall(PF)
+                    end
                 end
             end
         end
@@ -14287,10 +14307,12 @@ local function destroy_mobile_gui(gui_data)
 end
 
 local function create_triggerbot_panel()
-    if System.__properties.__triggerbot_ui then
+    if System.__properties.__triggerbot_ui and System.__properties.__triggerbot_ui.gui and System.__properties.__triggerbot_ui.gui.Parent then
+        System.__properties.__triggerbot_ui.gui.Enabled = true
         return System.__properties.__triggerbot_ui
     end
 
+    -- same floating UI style as Manuel Spam
     local ScreenGui = Instance.new('ScreenGui')
     ScreenGui.Name = 'TriggerbotPanel'
     ScreenGui.ResetOnSpawn = false
@@ -14301,14 +14323,15 @@ local function create_triggerbot_panel()
     local Frame = Instance.new('Frame')
     Frame.Name = 'TriggerbotFrame'
     Frame.Size = UDim2.new(0, 140, 0, 70)
-    Frame.Position = UDim2.new(0.4, 0, 0.5, -35)
-    Frame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+    Frame.Position = UDim2.new(0.55, 0, 0.5, -35)
+    Frame.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
     Frame.BorderSizePixel = 1
-    Frame.BorderColor3 = Color3.fromRGB(78, 92, 122)
+    Frame.BorderColor3 = Color3.fromRGB(38, 38, 38)
+    Frame.Active = true
     Frame.Parent = ScreenGui
 
     local FrameStroke = Instance.new('UIStroke', Frame)
-    FrameStroke.Color = Color3.fromRGB(78, 92, 122)
+    FrameStroke.Color = Color3.fromRGB(38, 38, 38)
     FrameStroke.Thickness = 1
 
     local Title = Instance.new('TextLabel')
@@ -14326,93 +14349,102 @@ local function create_triggerbot_panel()
     local ToggleBtn = Instance.new('TextButton')
     ToggleBtn.Name = 'Toggle'
     ToggleBtn.Size = UDim2.new(0, 110, 0, 28)
-    ToggleBtn.Position = UDim2.new(0.5, -55, 0, 36)
-    ToggleBtn.BackgroundColor3 = Color3.fromRGB(40, 42, 50)
+    ToggleBtn.Position = UDim2.new(0.5, -55, 0, 34)
+    ToggleBtn.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
     ToggleBtn.BorderSizePixel = 1
-    ToggleBtn.BorderColor3 = Color3.fromRGB(78, 92, 122)
+    ToggleBtn.BorderColor3 = Color3.fromRGB(38, 38, 38)
     ToggleBtn.Font = Enum.Font.GothamBold
     ToggleBtn.Text = 'OFF'
     ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     ToggleBtn.TextSize = 13
+    ToggleBtn.AutoButtonColor = false
     ToggleBtn.Parent = Frame
+
     local ToggleStroke = Instance.new('UIStroke', ToggleBtn)
-    ToggleStroke.Color = Color3.fromRGB(78, 92, 122)
+    ToggleStroke.Color = Color3.fromRGB(38, 38, 38)
     ToggleStroke.Thickness = 1
 
-    local dragging = false
-    local dragStart
-    local startPos
+    local function update_button(on)
+        ToggleBtn.Text = on and 'ON' or 'OFF'
+        ToggleBtn.BackgroundColor3 = on and Color3.fromRGB(40, 70, 40) or Color3.fromRGB(20, 20, 20)
+    end
 
-    Title.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            dragStart = input.Position
-            startPos = Frame.Position
+    local function set_triggerbot(on)
+        System.__properties.__triggerbot_enabled = on
+        if System.__triggerbot then
+            System.__triggerbot.__enabled = on
         end
-    end)
-
-    Title.InputChanged:Connect(function(input)
-        if not dragging then
-            return
+        if System.triggerbot and System.triggerbot.enable then
+            pcall(System.triggerbot.enable, on)
         end
-
-        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-            local delta = input.Position - dragStart
-            Frame.Position = UDim2.new(
-                startPos.X.Scale,
-                startPos.X.Offset + delta.X,
-                startPos.Y.Scale,
-                startPos.Y.Offset + delta.Y
-            )
-        end
-    end)
-
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
-        end
-    end)
-
-    local function update_button(active)
-        if active then
-            ToggleBtn.Text = 'ON'
-            ToggleBtn.TextColor3 = Color3.fromRGB(18, 18, 18)
-            ToggleBtn.BackgroundColor3 = Color3.fromRGB(100, 220, 130)
-            ToggleStroke.Color = Color3.fromRGB(100, 220, 130)
-        else
-            ToggleBtn.Text = 'OFF'
-            ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-            ToggleBtn.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
-            ToggleStroke.Color = Color3.fromRGB(38, 38, 38)
-        end
+        update_button(on)
     end
 
     ToggleBtn.MouseButton1Click:Connect(function()
-        if System then
-            local newState = not System.__properties.__triggerbot_enabled
-            System.__properties.__triggerbot_enabled = newState
-            if System.triggerbot and System.triggerbot.enable then
-                pcall(System.triggerbot.enable, newState)
-            end
-
-            update_button(newState)
-
-            if getgenv().TriggerbotNotify then
-                send_notification('Triggerbot', newState and 'ON' or 'OFF', 2)
-            end
+        local next_state = not (System.__properties.__triggerbot_enabled or false)
+        set_triggerbot(next_state)
+    end)
+    ToggleBtn.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch then
+            local next_state = not (System.__properties.__triggerbot_enabled or false)
+            set_triggerbot(next_state)
         end
     end)
+
+    -- drag (same idea as Manuel Spam)
+    local dragging, dragStart, startPos
+    local function begin_drag(input)
+        dragging = true
+        dragStart = input.Position
+        startPos = Frame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+            end
+        end)
+    end
+    Frame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            begin_drag(input)
+        end
+    end)
+    Title.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            begin_drag(input)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if not dragging then return end
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            local delta = input.Position - dragStart
+            Frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+
+    update_button(System.__properties.__triggerbot_enabled or false)
 
     System.__properties.__triggerbot_ui = {
         gui = ScreenGui,
         frame = Frame,
         button = ToggleBtn,
         title = Title,
-        update = update_button
+        update = update_button,
+        set = set_triggerbot
     }
-
     return System.__properties.__triggerbot_ui
 end
+
+function destroy_triggerbot_panel()
+    if System.__properties.__triggerbot_ui and System.__properties.__triggerbot_ui.gui then
+        pcall(function() System.__properties.__triggerbot_ui.gui:Destroy() end)
+    end
+    System.__properties.__triggerbot_ui = nil
+    pcall(function()
+        local old = CoreGui:FindFirstChild('TriggerbotPanel')
+        if old then old:Destroy() end
+    end)
+end
+
 
 local triggerbot_module = AutoparryTab:create_module({
     title = "Triggerbot",
@@ -14427,33 +14459,42 @@ local triggerbot_module = AutoparryTab:create_module({
                 if getgenv().TriggerbotNotify then
                     send_notification("Triggerbot", "ON", 2)
                 end
-
-                do
-                    if not System.__properties.__triggerbot_ui then
-                        create_triggerbot_panel()
-                    end
-
+                -- show floating UI if Show UI is on (same idea as Manuel Spam panel)
+                if getgenv().TriggerbotShowUI then
+                    create_triggerbot_panel()
                     if System.__properties.__triggerbot_ui and System.__properties.__triggerbot_ui.update then
                         System.__properties.__triggerbot_ui.update(true)
                     end
                 end
-
             else
                 if System.triggerbot and System.triggerbot.enable then pcall(System.triggerbot.enable, false) end
                 if getgenv().TriggerbotNotify then
                     send_notification("Triggerbot", "OFF", 2)
                 end
-                if System.__properties.__triggerbot_ui and System.__properties.__triggerbot_ui.gui then
+                destroy_triggerbot_panel()
+                if System.__properties.__mobile_guis and System.__properties.__mobile_guis.triggerbot then
                     pcall(function()
-                        System.__properties.__triggerbot_ui.gui:Destroy()
+                        destroy_mobile_gui(System.__properties.__mobile_guis.triggerbot)
                     end)
-                    System.__properties.__triggerbot_ui = nil
-                end
-                if System.__properties.__mobile_guis.triggerbot then
-                    destroy_mobile_gui(System.__properties.__mobile_guis.triggerbot)
                     System.__properties.__mobile_guis.triggerbot = nil
                 end
             end
+        end
+    end
+})
+
+triggerbot_module:create_checkbox({
+    title = "Show UI",
+    flag = "TriggerbotShowUI",
+    callback = function(value)
+        getgenv().TriggerbotShowUI = value
+        if value then
+            create_triggerbot_panel()
+            if System.__properties.__triggerbot_ui and System.__properties.__triggerbot_ui.update then
+                System.__properties.__triggerbot_ui.update(System.__properties.__triggerbot_enabled or false)
+            end
+        else
+            destroy_triggerbot_panel()
         end
     end
 })
@@ -14500,6 +14541,29 @@ staff_detection_module:create_dropdown({
     maximum_options = 2,
     callback = function(value)
         modActionMode = value
+    end
+})
+
+local dribble_module = StaffTab:create_module({
+    title = "Dribble Detection",
+    flag = "DribbleDetectionModule",
+    description = "Toggle Dribble Ball detection",
+    section = "right",
+    callback = function(state)
+        getgenv().DribbleDetection = state
+        if System and System.__config then
+            System.__config.__detections.__dribble = state
+        end
+        if getgenv().DribbleNotify then
+            send_notification("Dribble Detection", state and "ON" or "OFF", 2)
+        end
+    end
+})
+dribble_module:create_checkbox({
+    title = "Notify",
+    flag = "DribbleNotify",
+    callback = function(value)
+        getgenv().DribbleNotify = value
     end
 })
 
@@ -14583,28 +14647,6 @@ slashes_module:create_slider({
     end
 })
 
-local dribble_module = DetectionTab:create_module({
-    title = "Dribble Detection",
-    flag = "DribbleDetectionModule",
-    description = "Toggle Dribble Ball detection",
-    section = "right",
-    callback = function(state)
-        getgenv().DribbleDetection = state
-        if System and System.__config then
-            System.__config.__detections.__dribble = state
-        end
-        if getgenv().DribbleNotify then
-            send_notification("Dribble Detection", state and "ON" or "OFF", 2)
-        end
-    end
-})
-dribble_module:create_checkbox({
-    title = "Notify",
-    flag = "DribbleNotify",
-    callback = function(value)
-        getgenv().DribbleNotify = value
-    end
-})
 
 local phantom_module = DetectionTab:create_module({
     title = "Anti-Phantom",
@@ -14614,6 +14656,78 @@ local phantom_module = DetectionTab:create_module({
     callback = function(state)
         if System and System.__config then
             System.__config.__detections.__phantom = state
+        end
+    end
+})
+
+local anti_hellhook_module = DetectionTab:create_module({
+    title = "Anti Hell Hook",
+    description = "Skip Hell Hook",
+    flag = "AntiHellHookModule",
+    section = "right",
+    callback = function(state)
+        if System and System.__config then
+            System.__config.__detections.__hellhook = state
+        end
+    end
+})
+
+local anti_singularity_module = DetectionTab:create_module({
+    title = "Anti Singularity",
+    description = "Skip Singularity",
+    flag = "AntiSingularityModule",
+    section = "left",
+    callback = function(state)
+        if System and System.__config then
+            System.__config.__detections.__singularity = state
+        end
+    end
+})
+
+local anti_pull_module = DetectionTab:create_module({
+    title = "Anti Pull",
+    description = "Skip Pull",
+    flag = "AntiPullModule",
+    section = "right",
+    callback = function(state)
+        if System and System.__config then
+            System.__config.__detections.__pull = state
+        end
+    end
+})
+
+local anti_ninjadash_module = DetectionTab:create_module({
+    title = "Anti Ninja Dash",
+    description = "Skip Ninja Dash",
+    flag = "AntiNinjaDashModule",
+    section = "left",
+    callback = function(state)
+        if System and System.__config then
+            System.__config.__detections.__ninjadash = state
+        end
+    end
+})
+
+local anti_aero_module = DetectionTab:create_module({
+    title = "Anti Aerodynamic Slash",
+    description = "Skip Aerodynamic Slash / Tornado",
+    flag = "AntiAerodynamicModule",
+    section = "right",
+    callback = function(state)
+        if System and System.__config then
+            System.__config.__detections.__aerodynamic = state
+        end
+    end
+})
+
+local anti_curve_module = DetectionTab:create_module({
+    title = "Anti Curve",
+    description = "Skip curved balls",
+    flag = "AntiCurveModule",
+    section = "left",
+    callback = function(state)
+        if System and System.__config then
+            System.__config.__detections.__anticurve = state
         end
     end
 })
@@ -14905,28 +15019,14 @@ local auto_spam_module = SpamTab:create_module({
     flag = "AutoSpamModule",
     section = "right",
     callback = function(state)
-        if System and System.auto_spam then
+        if System then
             System.__properties.__auto_spam_enabled = state
             if state then
                 if System.auto_spam and System.auto_spam.start then pcall(System.auto_spam.start) end
-                if getgenv().AutoSpamNotify then
-                    send_notification("Auto Spam", "ON", 2)
-                end
             else
                 if System.auto_spam and System.auto_spam.stop then pcall(System.auto_spam.stop) end
-                if getgenv().AutoSpamNotify then
-                    send_notification("Auto Spam", "OFF", 2)
-                end
             end
         end
-    end
-})
-
-auto_spam_module:create_checkbox({
-    title = "Notify",
-    flag = "AutoSpamNotify",
-    callback = function(value)
-        getgenv().AutoSpamNotify = value
     end
 })
 auto_spam_module:create_dropdown({
