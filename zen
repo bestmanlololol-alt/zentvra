@@ -3532,7 +3532,8 @@ library:load()
 local AutoparryTab = library:create_tab("Main")
 local BlatantTab = library:create_tab("Blatant")
 local SpamTab = library:create_tab("Spam")
-local DetectionTab = library:create_tab("Detection")
+local DetectionTab = library:create_tab("Anti")
+local StaffTab = library:create_tab("Detection")
 local PlayerTab = library:create_tab("Player")
 local VisualsTab = library:create_tab("Visual")
 local MiscTab = library:create_tab("Misc")
@@ -13250,7 +13251,8 @@ function System.autoparry.start()
     if System.__properties.__connections.__autoparry then
         System.__properties.__connections.__autoparry:Disconnect()
     end
-    System.__properties.__match_parried = System.__properties.__match_parried or {}
+    System.__properties.__match_parried = {}
+    System.__properties.__last_parry_at = 0
     System.__properties.__connections.__autoparry = RunService.Heartbeat:Connect(function()
         if not System.__properties.__autoparry_enabled or not LocalPlayer.Character or not LocalPlayer.Character.PrimaryPart then
             return
@@ -13258,40 +13260,57 @@ function System.autoparry.start()
         if System.__triggerbot and System.__triggerbot.__enabled then
             return
         end
+        -- global server-style cooldown: never fire twice while CD is active
+        local now = tick()
+        if (now - (System.__properties.__last_parry_at or 0)) < 0.55 then
+            return
+        end
+        if System.__properties.__parried then
+            return
+        end
+
         local balls = System.ball.get_all()
         local training = System.ball.collect(workspace:FindFirstChild("TrainingBalls"))
         for i = 1, #training do balls[#balls + 1] = training[i] end
         local parried_map = System.__properties.__match_parried
+
         for _, ball in pairs(balls) do
             if not ball or not ball.Parent then continue end
             if parried_map[ball] then continue end
             local zoomies = ball:FindFirstChild('zoomies')
             if not zoomies then continue end
+
+            -- only parry when YOU are the target (no early coming_at_me spam on main)
+            if not System.ball.is_targeted(ball) then continue end
+
             local velocity = zoomies.VectorVelocity or Vector3.new()
+            local speed = velocity.Magnitude
+            if speed < 1 then continue end
+
             local distance = (LocalPlayer.Character.PrimaryPart.Position - ball.Position).Magnitude
             local ping = Stats.Network.ServerStatsItem['Data Ping']:GetValue() / 10
             local ping_threshold = math.clamp(ping / 10, 5, 17)
-            local speed = velocity.Magnitude
-            local capped_speed_diff = math.min(math.max(speed - 9.5, 0), 1200)
+            local capped_speed_diff = math.min(math.max(speed - 9.5, 0), 650)
             local speed_divisor = (2.4 + capped_speed_diff * 0.002) * (System.__properties.__divisor_multiplier or 0.87)
             local parry_accuracy = ping_threshold + math.max(speed / math.max(speed_divisor, 0.4), 9.5)
-            if System.__config.__detections.__aerodynamic and ball:FindFirstChild('AeroDynamicSlashVFX') then
+
+            -- ETA gate: only hit when ball is about to reach you (stops early double-parry)
+            local eta = distance / math.max(speed, 1)
+            if eta > 0.28 then continue end
+
+            local det = System.__config.__detections
+            local props = System.__properties
+            if det.__aerodynamic and ball:FindFirstChild('AeroDynamicSlashVFX') then
                 pcall(function() ball.AeroDynamicSlashVFX:Destroy() end)
-                System.__properties.__tornado_time = tick()
+                props.__tornado_time = tick()
             end
-            if System.__config.__detections.__aerodynamic and Runtime and Runtime:FindFirstChild('Tornado') then
-                if (tick() - (System.__properties.__tornado_time or 0)) < (Runtime.Tornado:GetAttribute('TornadoTime') or 1) + 0.314159 then
+            if det.__aerodynamic and Runtime and Runtime:FindFirstChild('Tornado') then
+                if (tick() - (props.__tornado_time or 0)) < (Runtime.Tornado:GetAttribute('TornadoTime') or 1) + 0.314159 then
                     continue
                 end
             end
-            if System.__config.__detections.__anticurve and System.ball.is_targeted(ball) and System.detection.is_curved() then
-                continue
-            end
-            if ball:FindFirstChild('ComboCounter') and (System.__config.__detections.__dribble or getgenv().DribbleDetection) then
-                continue
-            end
-            local det = System.__config.__detections
-            local props = System.__properties
+            if det.__anticurve and System.detection.is_curved() then continue end
+            if ball:FindFirstChild('ComboCounter') and (det.__dribble or getgenv().DribbleDetection) then continue end
             if det.__singularity and LocalPlayer.Character.PrimaryPart:FindFirstChild('SingularityCape') then continue end
             if det.__ninjadash and props.__ninjadash_active then continue end
             if det.__pull and props.__pull_active then continue end
@@ -13301,21 +13320,33 @@ function System.autoparry.start()
             if det.__timehole and props.__timehole_active then continue end
             if det.__slashesoffury and props.__slashesoffury_active then continue end
             if det.__slashesofduality and props.__slashesofduality_active then continue end
-            if System.ball.should_parry(ball, true) and distance <= parry_accuracy then
+
+            if distance <= parry_accuracy then
                 if getgenv().AutoParryMode == "Keypress" then
                     System.parry.keypress()
                 else
                     System.parry.execute_action()
                 end
+                -- lock until target changes or long cooldown (prevents double parry / CD death)
                 parried_map[ball] = true
                 props.__parried = true
+                props.__last_parry_at = tick()
                 local captured = ball
-                task.delay(0.12, function()
+                pcall(function()
+                    ball:GetAttributeChangedSignal('target'):Once(function()
+                        if System.__properties.__match_parried then
+                            System.__properties.__match_parried[captured] = nil
+                        end
+                        System.__properties.__parried = false
+                    end)
+                end)
+                task.delay(0.7, function()
                     if System.__properties.__match_parried then
                         System.__properties.__match_parried[captured] = nil
                     end
                     System.__properties.__parried = false
                 end)
+                return -- one parry per frame max
             end
         end
     end)
@@ -13338,8 +13369,16 @@ function System.autoparry_test.start()
         System.__properties.__connections.__autoparry_test:Disconnect()
     end
     System.__properties.__test_parried = {}
+    System.__properties.__test_last_parry_at = 0
     System.__properties.__connections.__autoparry_test = RunService.Heartbeat:Connect(function()
-        if not System.__properties.__test_autoparry_enabled or not LocalPlayer.Character or not LocalPlayer.Character.PrimaryPart then return end
+        if not System.__properties.__test_autoparry_enabled or not LocalPlayer.Character or not LocalPlayer.Character.PrimaryPart then
+            return
+        end
+        local now = tick()
+        if (now - (System.__properties.__test_last_parry_at or 0)) < 0.45 then
+            return
+        end
+
         local fracture = getgenv().TestFractureTwoBalls ~= false
         local balls = System.ball.get_all()
         local training = System.ball.collect(workspace:FindFirstChild("TrainingBalls"))
@@ -13348,19 +13387,28 @@ function System.autoparry_test.start()
         local vel_cap = System.__properties.__test_velocity_cap or 2500
         local divisor_mult = test_update_divisor()
         local parried_map = System.__properties.__test_parried
+        local did_parry = false
+
         for _, ball in pairs(balls) do
             if not ball or not ball.Parent then continue end
             if parried_map[ball] then continue end
             local zoomies = ball:FindFirstChild('zoomies')
             if not zoomies then continue end
+            if not System.ball.should_parry(ball, fracture) then continue end
+
             local velocity = zoomies.VectorVelocity or Vector3.new()
+            local speed = velocity.Magnitude
+            if speed < 1 then continue end
             local distance = (LocalPlayer.Character.PrimaryPart.Position - ball.Position).Magnitude
             local ping = Stats.Network.ServerStatsItem['Data Ping']:GetValue() / 10
             local ping_threshold = math.clamp(ping / 10, 5, 22)
-            local speed = velocity.Magnitude
             local capped_speed_diff = math.min(math.max(speed - 9.5, 0), vel_cap)
             local speed_divisor = (2.05 + capped_speed_diff * 0.00115) * divisor_mult
             local parry_accuracy = (ping_threshold + math.max(speed / math.max(speed_divisor, 0.35), 9.5)) * range_mult
+
+            local eta = distance / math.max(speed, 1)
+            if eta > 0.32 then continue end
+
             local det = System.__config.__detections
             local props = System.__properties
             if det.__anticurve and System.detection.is_curved() then continue end
@@ -13374,17 +13422,38 @@ function System.autoparry_test.start()
             if det.__slashesoffury and props.__slashesoffury_active then continue end
             if det.__slashesofduality and props.__slashesofduality_active then continue end
             if ball:FindFirstChild('ComboCounter') and (det.__dribble or getgenv().DribbleDetection) then continue end
-            if System.ball.should_parry(ball, fracture) and distance <= parry_accuracy then
-                if getgenv().AutoParryMode == "Keypress" then System.parry.keypress() else System.parry.execute_action() end
+
+            if distance <= parry_accuracy then
+                if getgenv().AutoParryMode == "Keypress" then
+                    System.parry.keypress()
+                else
+                    System.parry.execute_action()
+                end
                 parried_map[ball] = true
+                props.__test_last_parry_at = tick()
                 local captured = ball
-                task.delay(0.08, function()
-                    if System.__properties.__test_parried then System.__properties.__test_parried[captured] = nil end
+                pcall(function()
+                    ball:GetAttributeChangedSignal('target'):Once(function()
+                        if System.__properties.__test_parried then
+                            System.__properties.__test_parried[captured] = nil
+                        end
+                    end)
                 end)
+                task.delay(0.65, function()
+                    if System.__properties.__test_parried then
+                        System.__properties.__test_parried[captured] = nil
+                    end
+                end)
+                did_parry = true
+                if not fracture then
+                    return
+                end
+                -- fracture: allow second ball same frame only if different instance and still under global soft CD
             end
         end
     end)
 end
+
 function System.autoparry_test.stop()
     if System.__properties.__connections.__autoparry_test then
         System.__properties.__connections.__autoparry_test:Disconnect()
@@ -14397,7 +14466,7 @@ triggerbot_module:create_checkbox({
     end
 })
 
-local staff_detection_module = DetectionTab:create_module({
+local staff_detection_module = StaffTab:create_module({
     title = 'Staff Detection',
     description = 'Detect Bladeball Mod in the server',
     flag = 'ModDetectionModule',
